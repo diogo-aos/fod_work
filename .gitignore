@@ -1,2 +1,6 @@
 data/
 artifacts/
+venv/
+.idea
+*.env
+*.pyc

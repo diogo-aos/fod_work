@@ -31,7 +31,7 @@ activations = [
 
 learning_rate = [
     1e-3,
-    1e-4
+    #1e-4
 ]
 
 datasets = [
@@ -40,10 +40,30 @@ datasets = [
     'merge'
 ]
 
+crop_sizes = [
+#    'original',
+#    256,
+    416,
+    512,
+#    704,
+    832,
+#    960
+]
 
-def get_grid_search_generator(train_batch_size: int = 8, max_epochs: int = 50, split: Sequence = (0.8, 0.1, 0.1)):
-    for seg_model, (enc, weight_lst), optimizer, loss, activation, lr, dataset in \
-         product(segmentation_models, encoder_weights, optimizers, losses, activations, learning_rate, datasets):
+
+def get_grid_search_generator(train_batch_size: int = 8,
+                              max_epochs: int = 50,
+                              split: Sequence = (0.8, 0.1, 0.1)):
+    params = product(segmentation_models,
+                     encoder_weights,
+                     optimizers,
+                     losses,
+                     activations,
+                     learning_rate,
+                     crop_sizes,
+                     datasets,
+                     )
+    for seg_model, (enc, weight_lst), optimizer, loss, activation, lr, crop_size, dataset in params:
         for weights in weight_lst:
             yield RunConfig(
                 segmentation_model=seg_model,
@@ -59,10 +79,11 @@ def get_grid_search_generator(train_batch_size: int = 8, max_epochs: int = 50, s
                 eval_batch_size=1,
                 split=split,
                 classes=['fod'],
+                crop=crop_size,
             )
 
 
 if __name__ == '__main__':
     gen = get_grid_search_generator()
     lst = list(gen)
-    print(len(lst), lst)
+    print(len(lst))

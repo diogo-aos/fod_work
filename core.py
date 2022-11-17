@@ -18,6 +18,7 @@ import albumentations as albu
 
 import dataclasses
 
+from crop import crop_dataset_core
 
 from typing import List, Sequence, Optional
 
@@ -38,6 +39,10 @@ class RunConfig:
     dataset: int
     split: Sequence[float]
     split_seed: Optional[int] = None
+    crop: str = 'original'
+    patience_epochs: int = 15
+    patience_tolerance: float = 0.01
+    patience_score: str = 'iou_score'
 
 # %% make dataset
 class Dataset(BaseDataset):
@@ -64,11 +69,14 @@ class Dataset(BaseDataset):
             augmentation=None,
             preprocessing=None,
     ):
-        mask_ids = os.listdir(masks_dir)
-        self.ids = list(map(lambda fn: fn.split('.')[0], mask_ids))
+        mask_fns = os.listdir(masks_dir)
+        im_fns = os.listdir(images_dir)
 
-        self.masks_fps = [os.path.join(masks_dir, f'{image_id}.png') for image_id in self.ids]
-        self.images_fps = [os.path.join(images_dir, f'{image_id}.jpg') for image_id in self.ids]
+        mask_ids = {fn.split('.')[0]: fn for fn in mask_fns}
+        im_ids = {fn.split('.')[0]: fn for fn in im_fns}
+
+        self.masks_fps = [os.path.join(masks_dir, fn) for _, fn in mask_ids.items()]
+        self.images_fps = [os.path.join(images_dir, im_ids[id_]) for id_,_ in mask_ids.items()]
 
         # convert str names to class values on masks
         self.class_values = [self.CLASSES.index(cls.lower()) for cls in classes]
@@ -96,15 +104,50 @@ class Dataset(BaseDataset):
             sample = self.augmentation(image=image, mask=mask)
             image, mask = sample['image'], sample['mask']
 
-        # apply preprocessing
+
         if self.preprocessing:
             sample = self.preprocessing(image=image, mask=mask)
             image, mask = sample['image'], sample['mask']
+            
         return image, mask
         # return np.transpose(image[:1056,:,:], (2,0,1)), np.transpose(mask[:1056,:,:], (2,0,1))
 
     def __len__(self):
+        return len(self.masks_fps)
+
+
+class FilenameDataset(BaseDataset):
+    def __init__(self, images_dir, masks_dir):
+        raise NotImplemented()
+        self.ids = []
+        self.masks_fns = [os.path.join(masks_dir, f'{image_id}.png') for image_id in self.ids]
+        self.images_fns = [os.path.join(images_dir, f'{image_id}.jpg') for image_id in self.ids]
+
+    def __getitem__(self, i):
+        return self.images_fns[i], self.masks_fns[i]
+
+    def __len__(self):
         return len(self.ids)
+
+class CroppedDataset(BaseDataset):
+    def __init__(self, files_dataset: FilenameDataset,
+                 crop_base_dir,
+                 crop_size: int = 512) -> None:
+        super().__init__()
+        self.files_dataset = files_dataset
+
+        
+        # make dirs for cropped images and masks
+        self.crop_pairs_fns = crop_dataset_core(files_dataset, crop_base_dir,
+                                                crop_size=crop_size,
+                                                filter_empty=True)
+
+    def __getitem__(self, i):
+        return self.crop_pairs_fns[i]
+
+    def __len__(self):
+        return len(self.crop_pairs_fns)
+
 
 
 def to_tensor(x, **kwargs):

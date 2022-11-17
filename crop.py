@@ -18,7 +18,7 @@ TX2_IM_DIR = os.environ['TX2_IMAGE_DIR']
 TX2_SEG_DIR = os.environ['TX2_SEG_DIR']
 TX2_ANNOT_FN = os.environ['TX2_ANNOT_FN']
 
-OUTPUT_BASE_DIR = os.environ['OUTPUT_DIR']
+OUTPUT_BASE_DIR = os.environ['CROPS_OUTPUT_DIR']
 
 
 
@@ -30,6 +30,7 @@ sources = {
 
 CROP_SIZE = [256, 416, 512, 704, 832, 960]
 
+OVERLAP = 0.5
 
 
 def main():
@@ -38,9 +39,13 @@ def main():
         print(crop_size, dataset)
         im_dir, seg_dir, _ = sources[dataset]
 
-        crop_dataset(im_dir, seg_dir,
-                    out_dir=os.path.join(OUTPUT_BASE_DIR, str(crop_size)),
-                    crop_size=crop_size, overlap=0.5, filter_empty=True)
+        crop_dataset(im_dir=im_dir,
+                    seg_dir=seg_dir,
+                    out_dir=os.path.join(OUTPUT_BASE_DIR, str(crop_size), dataset),
+                    crop_size=crop_size,
+                    overlap=OVERLAP,
+                    filter_empty=True)
+
 
 def crop_dataset(im_dir, seg_dir, out_dir, crop_size, overlap, filter_empty: bool = True):
     # set and create output directories
@@ -66,9 +71,14 @@ def crop_dataset(im_dir, seg_dir, out_dir, crop_size, overlap, filter_empty: boo
         im_im = cv2.imread(im_fn)
         seg_im = cv2.imread(seg_fn)
 
+        # if input segmentation is empty, then no area of interest exists, skip image
+        if filter_empty:
+            if seg_im.sum() == 0:
+                continue
+
         # get crops
-        im_crops = crops = crop_image(im_im, crop_size=256, overlap=overlap)
-        seg_crops = crops = crop_image(seg_im, crop_size=256, overlap=overlap)
+        im_crops = crops = crop_image(im_im, crop_size=crop_size, overlap=overlap)
+        seg_crops = crops = crop_image(seg_im, crop_size=crop_size, overlap=overlap)
 
         # write crops
         
@@ -87,6 +97,58 @@ def crop_dataset(im_dir, seg_dir, out_dir, crop_size, overlap, filter_empty: boo
             n_crops += 1
 
     print(f'total crops: {n_crops}\tremoved: {n_deleted}')
+
+
+def crop_dataset_core(image_mask_pairs_fns, out_dir, crop_size, overlap, filter_empty: bool = True):
+    # set and create output directories
+    crop_seg_dir = os.path.join(out_dir, "seg")
+    crop_im_dir = os.path.join(out_dir, "images")
+
+    os.makedirs(crop_seg_dir, exist_ok=True)
+    os.makedirs(crop_im_dir, exist_ok=True)
+
+    n_deleted = 0
+    n_crops = 0
+
+    crop_fns = []  # return list
+
+    # iterate over all (mask, image) pair
+    for im_fn, seg_fn in tqdm.tqdm(image_mask_pairs_fns):
+        crop_id = os.path.basename(im_fn).split('.')[0]
+
+        # load original image and segmentation
+        im_im = cv2.imread(im_fn)
+        seg_im = cv2.imread(seg_fn)
+
+        # if input segmentation is empty, then no area of interest exists, skip image
+        if filter_empty:
+            if seg_im.sum() == 0:
+                continue
+
+        # get crops
+        im_crops = crop_image(im_im, crop_size=crop_size, overlap=overlap)
+        seg_crops = crop_image(seg_im, crop_size=crop_size, overlap=overlap)
+
+        # write crops
+        
+        for i, (seg_crop, im_crop) in enumerate(zip(seg_crops, im_crops)):
+            # filter_empty is set and sum of all segmentation pixels is 0, then no annotation is present
+            if filter_empty:
+                if seg_crop.sum() == 0:
+                    n_deleted += 1
+                    continue
+
+            # write crops
+            cv2.imwrite((out_seg_crop_fn := os.path.join(crop_seg_dir, f"{crop_id}_{i}.png")),
+                        seg_crop)
+            cv2.imwrite((out_im_crop_fn := os.path.join(crop_im_dir, f"{crop_id}_{i}.png")),
+                        im_crop)
+
+            crop_fns.append(out_im_crop_fn, out_seg_crop_fn)
+            n_crops += 1
+
+    print(f'total crops: {n_crops}\tremoved: {n_deleted}')
+    return crop_fns
 
 
 def crop_image(im: np.ndarray, crop_size: int = (512, 512), overlap: float = 0.1):
@@ -123,8 +185,8 @@ def crop_image(im: np.ndarray, crop_size: int = (512, 512), overlap: float = 0.1
 
 def torchvision_transform():
     seed = np.random.randint(2147483647)
-    random.seed(seed)
-    torch.manual_seed(seed)
+    random.seed(67280421310721)
+    torch.manual_seed(67280421310721)
 
 
 
