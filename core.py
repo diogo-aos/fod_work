@@ -61,7 +61,7 @@ class Dataset(BaseDataset):
 
     """
 
-    CLASSES = ['unlabelled', 'fod']
+    CLASSES = {'fod': 255}
 
     def __init__(
             self,
@@ -81,7 +81,7 @@ class Dataset(BaseDataset):
         self.images_fps = [os.path.join(images_dir, im_ids[id_]) for id_,_ in mask_ids.items()]
 
         # convert str names to class values on masks
-        self.class_values = [self.CLASSES.index(cls.lower()) for cls in classes]
+        self.class_values = [self.CLASSES[cls.lower()] for cls in classes]
 
         self.augmentation = augmentation
         self.preprocessing = preprocessing

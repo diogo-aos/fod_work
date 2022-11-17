@@ -4,6 +4,7 @@ import glob
 import itertools
 import logging
 
+
 # In[ ]:
 
 import mlflow
@@ -290,10 +291,10 @@ def main():
         optimizer='adam',
         optimizer_lr=0.0001,
         loss='dice',
-        max_epochs=50,
-        train_batch_size=32,
+        max_epochs=1,
+        train_batch_size=16,
         eval_batch_size=1,
-        dataset='rpi',  # rpi, tx2 or merge
+        dataset='tx2',  # rpi, tx2 or merge
         split=(0.8, 0.1, 0.1),
         crop=416
     )
@@ -407,7 +408,7 @@ def eval_dataset(data_dir,
             mask_dir,
             classes=classes,
         )
-        predict(model, eval_dataset, eval_dataset_viz, viz_dir)
+        predict(model, dataset=eval_dataset, dataset_viz=eval_dataset_viz, viz_dir=viz_dir)
 
 
 
