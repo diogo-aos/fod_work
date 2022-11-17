@@ -10,41 +10,68 @@ import numpy as np
 import itertools
 import tqdm
 
-RPI_IM_DIR = os.environ['RPI_IMAGE_DIR']
-RPI_SEG_DIR = os.environ['RPI_SEG_DIR'] 
-RPI_ANNOT_FN = os.environ['RPI_ANNOT_FN']
-
-TX2_IM_DIR = os.environ['TX2_IMAGE_DIR']
-TX2_SEG_DIR = os.environ['TX2_SEG_DIR']
-TX2_ANNOT_FN = os.environ['TX2_ANNOT_FN']
-
-OUTPUT_BASE_DIR = os.environ['CROPS_OUTPUT_DIR']
 
 
-
-#%%
-sources = {
-    'rpi': (RPI_IM_DIR, RPI_SEG_DIR, RPI_ANNOT_FN),
-    'tx2': (TX2_IM_DIR, TX2_SEG_DIR, TX2_ANNOT_FN)
-}
-
-CROP_SIZE = [256, 416, 512, 704, 832, 960]
+CROP_SIZE = [
+    #256,
+    416,
+    512,
+    #704,
+    832,
+    #960,
+]
 
 OVERLAP = 0.5
 
 
-def main():
+def get_env_params():
+    RPI_IM_DIR = os.environ['RPI_IMAGE_DIR']
+    RPI_SEG_DIR = os.environ['RPI_SEG_DIR'] 
+    RPI_ANNOT_FN = os.environ['RPI_ANNOT_FN']
+
+    TX2_IM_DIR = os.environ['TX2_IMAGE_DIR']
+    TX2_SEG_DIR = os.environ['TX2_SEG_DIR']
+    TX2_ANNOT_FN = os.environ['TX2_ANNOT_FN']
+
+    UNSEEN_RPI_IMAGE_DIR = os.environ["UNSEEN_RPI_IMAGE_DIR"]
+    UNSEEN_RPI_SEG_DIR = os.environ["UNSEEN_RPI_SEG_DIR"]
+
+    UNSEEN_TX2_IMAGE_DIR = os.environ["UNSEEN_TX2_IMAGE_DIR"]
+    UNSEEN_TX2_SEG_DIR = os.environ["UNSEEN_TX2_SEG_DIR"]
+
+
+    OUTPUT_BASE_DIR = os.environ['CROPS_OUTPUT_DIR']
+
+    sources = {
+        #'rpi': (RPI_IM_DIR, RPI_SEG_DIR),
+        #'tx2': (TX2_IM_DIR, TX2_SEG_DIR),
+        'rpi_unseen': (UNSEEN_RPI_IMAGE_DIR, UNSEEN_RPI_SEG_DIR),
+        'tx2_unseen': (UNSEEN_TX2_IMAGE_DIR, UNSEEN_TX2_SEG_DIR)
+    }
+
+    params = {
+        'sources': sources,
+        'OUTPUT_BASE_DIR': OUTPUT_BASE_DIR
+    }
+
+    return params
+
+def main(filter_empty: bool):
+    env_params = get_env_params()
+    sources = env_params['sources']
+    OUTPUT_BASE_DIR = env_params['OUTPUT_BASE_DIR']
+
     params = itertools.product(CROP_SIZE, sources.keys())
     for crop_size, dataset in params:
         print(crop_size, dataset)
-        im_dir, seg_dir, _ = sources[dataset]
+        im_dir, seg_dir = sources[dataset]
 
         crop_dataset(im_dir=im_dir,
                     seg_dir=seg_dir,
                     out_dir=os.path.join(OUTPUT_BASE_DIR, str(crop_size), dataset),
                     crop_size=crop_size,
                     overlap=OVERLAP,
-                    filter_empty=True)
+                    filter_empty=filter_empty)
 
 
 def crop_dataset(im_dir, seg_dir, out_dir, crop_size, overlap, filter_empty: bool = True):
@@ -77,8 +104,8 @@ def crop_dataset(im_dir, seg_dir, out_dir, crop_size, overlap, filter_empty: boo
                 continue
 
         # get crops
-        im_crops = crops = crop_image(im_im, crop_size=crop_size, overlap=overlap)
-        seg_crops = crops = crop_image(seg_im, crop_size=crop_size, overlap=overlap)
+        im_crops = crop_image(im_im, crop_size=crop_size, overlap=overlap)
+        seg_crops = crop_image(seg_im, crop_size=crop_size, overlap=overlap)
 
         # write crops
         
@@ -191,12 +218,18 @@ def torchvision_transform():
 
 
 def ext_script():
+    # get env parameters
+    env_params = get_env_params()
+    sources = env_params['sources']
+    OUTPUT_BASE_DIR = env_params['OUTPUT_BASE_DIR']
+
     # create crops
     for crop_size in CROP_SIZE:
         crop_size = 832
+        raise NotImplementedError()
         for dataset, (imdir, _, annot_fn) in sources.items():
             dataset_output_dir = os.path.join(OUTPUT_BASE_DIR, str(crop_size), dataset)
-            ext_crop(imdir, annot_fn, dataset_output_dir, crop_size)
+            external_crop(imdir, annot_fn, dataset_output_dir, crop_size)
 
             # filter images with not seg
             seg_files = glob.glob(os.path.join(dataset_output_dir, "seg", "*"))
@@ -217,7 +250,7 @@ def ext_script():
 
 
 
-def ext_crop(input_dir, annot_json_fn, output_base_dir, crop_size, overlap=0.1):
+def external_crop(input_dir, annot_json_fn, output_base_dir, crop_size, overlap=0.1):
     script_path = os.environ['SCRIPT_PATH']
 
     # output dirs
@@ -233,6 +266,45 @@ def ext_crop(input_dir, annot_json_fn, output_base_dir, crop_size, overlap=0.1):
     p = sp.Popen(cmd.split(" "))
     p.wait()
 
+
+
+def masks_for_unlisted_images(im_dir, seg_dir):
+    """
+    This function checks if there are any images that don't have a corresponding mask in the mask (seg) directory;
+    if there are, an empty mask is created with the same name in the seg_dir
+    """
+    # read all images and masks
+    seg_fns = glob.glob(os.path.join(seg_dir, "*"))
+    seg_id_fns = {os.path.basename(fn).split('.')[0]: fn for fn in seg_fns}
+
+    im_fns = glob.glob(os.path.join(im_dir, "*"))
+    im_id_fns = {os.path.basename(fn).split('.')[0]: fn for fn in im_fns}
+
+    for im_id, im_path in im_id_fns.items():
+        if im_id not in seg_id_fns.keys():
+            
+            # write empty mask
+            im = cv2.imread(im_path)
+
+            # make the image all zeros = empty mask
+            im[:,:,:] = 0
+
+            # write mask
+            seg_path = os.path.join(seg_dir, f"{im_id}.png")
+            cv2.imwrite(seg_path, im)
+
+            print(f"creating mask for {seg_path}")
+
+
 if __name__ == '__main__':
     #ext_script()
-    main()
+    action = 'crop'
+    if action == 'crop':
+        main(filter_empty=True)
+    elif action == 'create_missing_masks':
+        env_params = get_env_params()
+        sources = env_params['sources']
+        OUTPUT_BASE_DIR = env_params['OUTPUT_BASE_DIR']
+
+        for _, (im_dir, seg_dir) in sources.items():
+            masks_for_unlisted_images(im_dir, seg_dir)

@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
+import glob
+import itertools
 import logging
 
 # In[ ]:
@@ -13,6 +15,9 @@ import torch
 # dataset
 from torch.utils.data import DataLoader, random_split, ConcatDataset
 
+import pandas as pd
+import matplotlib.pyplot as plt
+
 import os
 import numpy as np
 import time
@@ -23,6 +28,7 @@ import dataclasses
 import json
 
 from core import Dataset, get_preprocessing, visualize, RunConfig
+from utils import mlflow_log_eval as log_eval
 
 import os
 import sys
@@ -47,7 +53,10 @@ BASE_DIR = os.environ['CROPS_OUTPUT_DIR']
 MODEL_OUTPUT_DIR = os.environ['MODEL_OUTPUT_DIR']
 
 
-sources = ['rpi', 'tx2']
+train_sources = ['rpi', 'tx2']
+test_sources = ['rpi_unseen', 'tx2_unseen']
+all_sources = train_sources + test_sources
+
 
 DEVICE = 'cuda'
 
@@ -67,13 +76,13 @@ for path in [MODEL_OUTPUT_DIR]:
 
 def get_data_dirs(dataset, crop: Union[int, str] = 'original'):
     if dataset == 'merge':
-        im_dirs = [os.path.join(BASE_DIR, str(crop), name, 'images') for name in sources]
-        seg_dirs = [os.path.join(BASE_DIR, str(crop), name, 'seg') for name in sources]
-    elif dataset in sources:
+        im_dirs = [os.path.join(BASE_DIR, str(crop), name, 'images') for name in train_sources]
+        seg_dirs = [os.path.join(BASE_DIR, str(crop), name, 'seg') for name in train_sources]
+    elif dataset in all_sources:
         im_dirs = [os.path.join(BASE_DIR, str(crop), dataset, 'images')]
         seg_dirs = [os.path.join(BASE_DIR, str(crop), dataset, 'seg')]
     else:
-        raise ValueError(f"dataset name must be merge or one of {sources}")
+        raise ValueError(f"dataset name must be 'merge' or one of {all_sources}")
     return im_dirs, seg_dirs
 
 
@@ -122,10 +131,8 @@ def train(run_config: RunConfig):
 
     train_dataset, valid_dataset, test_dataset = random_split(final_dataset, run_config.split, generator=random_generator)
 
-
     train_loader = DataLoader(train_dataset, batch_size=run_config.train_batch_size, shuffle=True, num_workers=8)
-    valid_loader = DataLoader(valid_dataset, batch_size=run_config.eval_batch_size, shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=run_config.eval_batch_size, shuffle=False, num_workers=4)
+    valid_loader = DataLoader(valid_dataset, batch_size=run_config.train_batch_size, shuffle=False, num_workers=4)
 
 
     # Dice/F1 score - https://en.wikipedia.org/wiki/S%C3%B8rensen%E2%80%93Dice_coefficient
@@ -169,9 +176,7 @@ def train(run_config: RunConfig):
         verbose=True,
     )
 
-    def log_eval(logs: dict, prefix: str = '', step: Optional[int] = None):
-        for k, v in logs.items():
-            mlflow.log_metric(f'{prefix}{k}', v, step=step)
+
 
     patience_counter = 0
     patience_prev_score = 0
@@ -212,10 +217,7 @@ def train(run_config: RunConfig):
                     
                     logging.info('Model saved!')
 
-                if i == 25:
-                    optimizer.param_groups[0]['lr'] = run_config.optimizer_lr / 10  # reduce learning rate
-                    logging.info('Decrease decoder learning rate to 1e-5!')
-
+    
                 # configure early stopping
                 if valid_logs[run_config.patience_score] - patience_prev_score < run_config.patience_tolerance:
                     patience_counter += 1
@@ -224,13 +226,19 @@ def train(run_config: RunConfig):
 
                 if patience_counter >= run_config.patience_epochs:
                     # reached limit for epochs without relevant improvement
-                    print("early stop")
+                    logging.info("early stop")
                     break
 
                 patience_prev_score = valid_logs[run_config.patience_score]
             
+
+            # test best model
             best_model = torch.load(model_path)
             
+            # test set
+            logging.info(f"evaluating on test set")
+            # use test set to determine inference time
+            test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=4)
             test_epoch = smp.utils.train.ValidEpoch(
                             best_model,
                             loss=loss,
@@ -247,6 +255,25 @@ def train(run_config: RunConfig):
 
             mlflow.log_metric('inference_time_per_sample', t_elapsed / len(test_dataset))
             log_eval(test_logs, prefix='test_')
+
+
+            # test on unseen images
+            for dataset in test_sources:
+                logging.info(f"evaluating on dataset {dataset}")
+                data_dir = os.path.join(BASE_DIR, str(run_config.crop), dataset)
+                logs = eval_dataset(
+                    data_dir=data_dir,
+                    encoder_name=run_config.encoder,
+                    model=best_model,
+                    classes=run_config.classes,
+                    batch_size=run_config.train_batch_size,
+                    loss_name=run_config.loss,
+                    optimizer_name=run_config.optimizer,
+                    store_predictions=True,
+                    predictions_prefix=run_name,
+                )
+                log_eval(logs, prefix=f"test_{dataset}_")
+
 
     except torch.cuda.OutOfMemoryError:
         logging.warning(f'cuda out of memory, batch size: {run_config.train_batch_size}')
@@ -286,8 +313,171 @@ def grid_search():
                 config.train_batch_size = int(config.train_batch_size / 2)
             else:
                 break
+
+
+
+def visualize_write(out_fn, **images):
+    """PLot images in one row."""
+    n = len(images)
+    plt.figure(figsize=(16, 5))
+    for i, (name, image) in enumerate(images.items()):
+        plt.subplot(1, n, i + 1)
+        plt.xticks([])
+        plt.yticks([])
+        plt.title(' '.join(name.split('_')).title())
+        plt.imshow(image)
+    #plt.show()
+    plt.savefig(out_fn)
+    plt.close()
+
+
+def predict(best_model, dataset, dataset_viz, viz_dir):
+    ids = list(dataset.mask_ids.keys())
+    for i in range(len(dataset)):       
+        image_vis = dataset_viz[i][0].astype('uint8')
+        image, gt_mask = dataset[i]
         
+        gt_mask = gt_mask.squeeze()
+        
+        x_tensor = torch.from_numpy(image).to(DEVICE).unsqueeze(0)
+        pr_mask = best_model.predict(x_tensor)
+        pr_mask = (pr_mask.squeeze().cpu().numpy().round())
+            
+        visualize_write(
+            os.path.join(viz_dir, f"{ids[i]}.png"),
+            image=image_vis, 
+            ground_truth_mask=gt_mask, 
+            predicted_mask=pr_mask
+        )
+
+def eval_dataset(data_dir,
+                 encoder_name,
+                 model,
+                 classes,
+                 batch_size: int = 1,
+                 loss_name="dice", optimizer_name="adam",
+                 store_predictions: bool = False,
+                 predictions_prefix: str = ''):
+    # load preprocessing fun
+    preprocessing_fn = get_preprocessing_fn(encoder_name=encoder_name)
+
+    # load dataset
+    im_dir = os.path.join(data_dir, "images")
+    mask_dir = os.path.join(data_dir, "seg")
+
+    eval_dataset = Dataset(
+            im_dir,
+            mask_dir,
+            preprocessing=get_preprocessing(preprocessing_fn),
+            classes=classes,
+        )
+    data_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
+
+    if loss_name == 'dice':
+        loss = smp.utils.losses.DiceLoss()
+    else:
+        raise ValueError(f'loss function selected {loss_name} is invalid')
+
+    if optimizer_name == 'adam':
+        optimizer = torch.optim.Adam([
+            dict(params=model.parameters())
+        ])
+    else:
+        raise ValueError(f'optimizer selected {optimizer_name} is invalid')
+
+
+    metrics = [
+        smp.utils.metrics.IoU(threshold=0.5),
+    ]
+
+    test_epoch = smp.utils.train.ValidEpoch(
+                            model,
+                            loss=loss,
+                            metrics=metrics,
+                            device=DEVICE,
+                            verbose=True,
+                        )
+    logs = test_epoch.run(data_loader)
+
+    if store_predictions:
+        viz_dir = os.path.join(data_dir, f"pred_{predictions_prefix}")
+        os.makedirs(viz_dir, exist_ok=True)
+        eval_dataset_viz = Dataset(
+            im_dir,
+            mask_dir,
+            classes=classes,
+        )
+        predict(model, eval_dataset, eval_dataset_viz, viz_dir)
+
+
+
+    return logs
+
+
+def eval_log_dataset(mlflow_run_id, model_path, base_dir, dataset_name: str, store_predicitons: bool = False):
+    # get data from mlflow run
+    run = mlflow.get_run(mlflow_run_id)
+
+    # compute data_dirs based on dataset and crop
+    data_dir = os.path.join(base_dir, str(run.data.params["crop"]), dataset_name)
+
+    # parse classes
+    classes = [c.strip("'") for c in run.data.params['classes'][1:-1].split(",")]
+    #with mlflow.start_run(run_id=mlflow_run_id) as active_run:
+    logs = eval_dataset(
+        data_dir=data_dir,
+        encoder_name=run.data.params["encoder"],
+        model=torch.load(model_path),
+        classes=classes,
+        batch_size=int(run.data.params["train_batch_size"]),
+        loss_name=run.data.params["loss"],
+        optimizer_name=run.data.params["optimizer"],
+        store_predictions=store_predicitons,
+    )
+    print(logs)
+    #log_eval(logs, prefix=f"test_{dataset_name}_")
+
+        
+
+def eval_log_dataset_on_models(base_data_dir, store_predicitons: bool = False):
+    # get all runs
+    current_experiment=dict(mlflow.get_experiment_by_name(os.environ['MLFLOW_EXPERIMENT_NAME']))
+    runs = mlflow.search_runs(current_experiment['experiment_id'])
+    
+    # list saved models and get the run_ids of those models
+    models_fn_list = glob.glob(os.path.join(MODEL_OUTPUT_DIR, "*.pth"))
+    models_run_names = [os.path.basename(fn).split('.')[0].split('best_model_')[-1] for fn in models_fn_list]
+    run_names = pd.DataFrame()
+    run_names["tags.mlflow.runName"] = models_run_names
+    run_names["model_path"] = models_fn_list
+
+    # runs that resulted in models
+    runs = runs.merge(run_names, how="inner")
+
+    run_ids = runs["run_id"]
+    model_paths = runs["model_path"]
+
+
+    # for each run, evaluate that model on the new test sets and log the results with mlflow
+    for (run_id, model_path), dataset_name in itertools.product(zip(run_ids, model_paths), test_sources):
+        print(dataset_name, run_id, model_path)
+        eval_log_dataset(mlflow_run_id=run_id, model_path=model_path, base_dir=base_data_dir, dataset_name=dataset_name, store_predicitons=store_predicitons)
+
+
+
+def fix_crop_param():
+    ''' this functions sets the crop parameter to "original" on all mlflow runs that don't have this parameter set'''
+    current_experiment=dict(mlflow.get_experiment_by_name(os.environ['MLFLOW_EXPERIMENT_NAME']))
+    runs = mlflow.search_runs(current_experiment['experiment_id'])
+    for run_id in runs['run_id']:
+        run = mlflow.get_run(run_id=run_id)
+        if 'crop' not in run.data.params:
+            with mlflow.start_run(run_id=run_id):
+                print(run_id)
+                mlflow.log_param('crop', 'original')
+
 
 if __name__ == '__main__':
     grid_search()
     #main()
+    #eval_log_dataset_on_models("data/crops", store_predicitons=True)
