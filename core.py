@@ -23,6 +23,8 @@ from crop import crop_dataset_core
 from typing import List, Sequence, Optional
 
 
+
+
 @dataclasses.dataclass()
 class RunConfig:
     segmentation_model: str
@@ -59,7 +61,7 @@ class Dataset(BaseDataset):
 
     """
 
-    CLASSES = ['fod', 'unlabelled']
+    CLASSES = ['unlabelled', 'fod']
 
     def __init__(
             self,
@@ -84,6 +86,8 @@ class Dataset(BaseDataset):
         self.augmentation = augmentation
         self.preprocessing = preprocessing
 
+        self.mask_ids = mask_ids
+
     def __getitem__(self, i):
 
         # read data
@@ -103,7 +107,6 @@ class Dataset(BaseDataset):
         if self.augmentation:
             sample = self.augmentation(image=image, mask=mask)
             image, mask = sample['image'], sample['mask']
-
 
         if self.preprocessing:
             sample = self.preprocessing(image=image, mask=mask)

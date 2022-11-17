@@ -5,7 +5,7 @@ from typing import Sequence
 
 segmentation_models = [
     'unet',
-    'DeepLabV3',
+#    'DeepLabV3',
 ]
 
 encoder_weights = [
@@ -41,13 +41,13 @@ datasets = [
 ]
 
 crop_sizes = [
-#    'original',
 #    256,
     416,
     512,
 #    704,
     832,
 #    960
+    'original',
 ]
 
 
