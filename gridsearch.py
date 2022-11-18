@@ -10,9 +10,9 @@ segmentation_models = [
 
 encoder_weights = [
 #    ('resnet18', ['imagenet', 'ssl']),
-    ('resnet34', ['imagenet']),
+#    ('resnet34', ['imagenet']),
     ('resnet50', ['imagenet']), # ,'ssl', 'swsl'
-#    ('resnet101', ['imagenet']),
+    ('resnet101', ['imagenet']),
 #    ('resnet152', ['imagenet']),
 #    ('timm-mobilenetv3_large_100', ['imagenet']),
 ]
@@ -47,7 +47,7 @@ crop_sizes = [
 #    704,
     832,
 #    960
-    'original',
+#    'original',
 ]
 
 
@@ -87,3 +87,4 @@ if __name__ == '__main__':
     gen = get_grid_search_generator()
     lst = list(gen)
     print(len(lst))
+    print(lst)

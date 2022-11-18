@@ -303,18 +303,19 @@ def main():
 
 
 def grid_search():
-    config_gen = gridsearch.get_grid_search_generator(train_batch_size=64)
+    config_gen = gridsearch.get_grid_search_generator(train_batch_size=64, max_epochs=200)
     for config in config_gen:
         while config.train_batch_size >= 1:
             print(json.dumps(dataclasses.asdict(config), indent=2))
             p = mp.Process(target=train, args=(config,))
             p.start()
             p.join()
-            if p.exitcode == 42:
+
+            # if process didn't return normally, assume memory issue, reduce batch size and try again
+            if p.exitcode != 0:
                 config.train_batch_size = int(config.train_batch_size / 2)
             else:
                 break
-
 
 
 def visualize_write(out_fn, **images):
