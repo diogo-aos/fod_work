@@ -12,7 +12,7 @@ encoder_weights = [
 #    ('resnet18', ['imagenet', 'ssl']),
 #    ('resnet34', ['imagenet']),
     ('resnet50', ['imagenet']), # ,'ssl', 'swsl'
-    ('resnet101', ['imagenet']),
+#    ('resnet101', ['imagenet']),
 #    ('resnet152', ['imagenet']),
 #    ('timm-mobilenetv3_large_100', ['imagenet']),
 ]
@@ -35,15 +35,15 @@ learning_rate = [
 ]
 
 datasets = [
-    'rpi',
-    'tx2',
+#    'rpi',
+#    'tx2',
     'merge'
 ]
 
 crop_sizes = [
 #    256,
     416,
-    512,
+#    512,
 #    704,
     832,
 #    960
@@ -80,6 +80,9 @@ def get_grid_search_generator(train_batch_size: int = 8,
                 split=split,
                 classes=['fod'],
                 crop=crop_size,
+                patience_epochs=50,
+                patience_tolerance=0.01,
+                patience_score='iou_score',
             )
 
 

@@ -303,7 +303,7 @@ def main():
 
 
 def grid_search():
-    config_gen = gridsearch.get_grid_search_generator(train_batch_size=64, max_epochs=200)
+    config_gen = gridsearch.get_grid_search_generator(train_batch_size=64, max_epochs=2000)
     for config in config_gen:
         while config.train_batch_size >= 1:
             print(json.dumps(dataclasses.asdict(config), indent=2))
