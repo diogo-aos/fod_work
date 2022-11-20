@@ -220,7 +220,7 @@ def train(run_config: RunConfig):
 
     
                 # configure early stopping
-                if valid_logs[run_config.patience_score] - patience_prev_score < run_config.patience_tolerance:
+                if abs(valid_logs[run_config.patience_score] - patience_prev_score) < run_config.patience_tolerance:
                     patience_counter += 1
                 else:
                     patience_counter = 0

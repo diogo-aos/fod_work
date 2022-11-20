@@ -81,7 +81,7 @@ def get_grid_search_generator(train_batch_size: int = 8,
                 classes=['fod'],
                 crop=crop_size,
                 patience_epochs=50,
-                patience_tolerance=0.01,
+                patience_tolerance=0.005,
                 patience_score='iou_score',
             )
 
