@@ -479,7 +479,31 @@ def fix_crop_param():
                 mlflow.log_param('crop', 'original')
 
 
+def add_avg_unseen_iou():
+    current_experiment=dict(mlflow.get_experiment_by_name(os.environ['MLFLOW_EXPERIMENT_NAME']))
+    runs = mlflow.search_runs(current_experiment['experiment_id'])
+
+    # filter failed runs
+    runs = runs[runs["metrics.epoch"] != 0]
+
+    # unssen iou score columns
+    iou_cols = [col for col in runs.columns if "unseen_iou_score" in col and col != "avg_unseen_iou_score"]
+
+    # compute avg unseen iou score
+    runs["new_iou_score_unseen"] = runs[iou_cols].mean(axis=1)
+
+    for _, row in runs.iterrows():
+        run_id = row["run_id"]
+        run = mlflow.get_run(run_id=run_id)
+        
+        if 'avg_unseen_iou_score' not in run.data.params:
+            avg_score = row["new_iou_score_unseen"]
+            print(run_id, avg_score)
+            with mlflow.start_run(run_id=run_id):
+                mlflow.log_metric('avg_unseen_iou_score', avg_score)
+
 if __name__ == '__main__':
     grid_search()
+    #add_avg_unseen_iou()
     #main()
     #eval_log_dataset_on_models("data/crops", store_predicitons=True)
